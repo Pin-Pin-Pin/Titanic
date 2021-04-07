@@ -1,0 +1,314 @@
+---
+title: "資料探勘0407"
+author: "b064020009"
+date: "2021/4/5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 資料探索
+```{r}
+#使用data.table讀取大型資料的速度比使用資料框快上數倍
+#install.packages("data.table")
+library(data.table) 
+#data <- fread("C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/datasets/titanic_disaster/data.csv")
+train <- fread("C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/datasets/titanic_disaster/train.csv")
+test <- fread("C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/datasets/titanic_disaster/test.csv")
+#str(data)#891 obs. of  12 variables #data是什麼
+str(train)#891 obs. of  12 variables
+str(test)#418 obs. of  11 variables #少結果(要去kaglle看)
+```
+#刪掉不要的欄位
+```{r}
+train=subset(train,select=c(-Name,-Ticket,-PassengerId))#select() : 選要分析的欄位
+library(data.table) 
+test <- fread("C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/datasets/titanic_disaster/test.csv")
+test_id=subset(test,select=PassengerId)
+test=subset(test,select=c(-Name,-Ticket,-PassengerId,-Cabin))#7沒有survived
+```
+
+#缺失值狀況
+```{r}
+#install.packages("plyr")
+#library(plyr)
+#a<-count(complete.cases(train)) #都
+#a
+#rm.data <- train[complete.cases(train), ]
+#install.packages("VIM")
+#library(VIM)
+#matrixplot(train)
+sum(is.na(train$Age))# 177
+sum(is.na(train$Pclass))
+sum(is.na(train$Sex))
+sum(is.na(train$SibSp))
+sum(is.na(train$Parch))
+sum(is.na(train$Ticket))
+sum(is.na(train$Fare))
+sum(is.na(train$Cabin))
+sum(is.na(train$Embarked))
+#sum(is.na(test$Age))# 86
+```
+有缺失值的row有177筆，太多，不能直接移除row。查看欄位分布後發現cabin太多所以要刪掉，age想辦法補。age分成用平均數還有knn來比較。
+```{R}
+train$Mean_Age<- ifelse(is.na(train$Age)==TRUE,29.7,train$Age)
+train=subset(train,select=-Age)
+summary(test)
+test$Mean_Age<- ifelse(is.na(test$Age)==TRUE,30.27,test$Age)
+test=subset(test,select=-Age)#7沒有survied
+```
+#欄位資料轉換
+```{r}
+#unique(train$Fare)#248筆
+#unique(train$Cabin)#148筆
+#summary(train)
+train$Pclass<-factor(train$Pclass)
+train$Sex<-ifelse(train$Sex=="male",1,0)
+#train$Embarked<-factor(train$Embarked)
+train$Survived<-factor(train$Survived)
+
+test$Pclass<-as.factor(test$Pclass)
+test$Sex<-ifelse(test$Sex=="male",1,0)
+#test$Embarked<-as.factor(test$Embarked)#正常
+str(test)
+```
+
+```{r}
+#install.packages("base")
+#library(base)
+#aaa<- mean(train$Age) #train$Mean_Age #不知道為何會變成na 
+#summary(train) 
+
+#install.packages("class")
+library(class)
+#把train分成沒有缺值的row(train_train_index跟train_test_index)還有有缺值的row，用前兩者來看k=多少比較好，再套用
+#is_na_index<-which(is.na(train$Age)==TRUE)
+#no_na_train<-train[-is_na_index,]
+set.seed(1)
+id<-sample(nrow(train),nrow(train)*0.7)
+train_train<-train[id,]
+#train_test<-no_na_train[-id,]
+train_test<-train[-id,]
+y<-train_train$Survived
+```
+
+
+#預測
+##決策樹
+```{r}
+#install.packages("tree"
+library(tree)
+set.seed(2)
+id<-sample(1:nrow(train),nrow(train)*0.7)
+train.test<-data.frame(train[-id,])
+train.train<-data.frame(train[id,])
+y.test<-train.test$Survived
+
+tree.titanic<-tree(Survived~.,train.train)
+tree.pred<-predict(tree.titanic,train.test,type="class")
+table(tree.pred,y.test)#正確率147+75/153+44+55+16=/0.821比train.test比例(0.63)多了20%
+summary(train.test)
+```
+## 決策樹剪枝
+```{R}
+set.seed(3)
+cv.titanic<-cv.tree(tree.titanic,FUN=prune.misclass)
+cv.titanic #size=8
+#剪枝
+prune.titanic<-prune.misclass(tree.titanic,best=8)
+plot(prune.titanic)
+text(prune.titanic,pretty=0)
+#剪枝後預測
+tree.pred<-predict(prune.titanic,train.test,type="class")
+table(tree.pred,y.test)#跟沒剪枝一樣。
+```
+
+```{r}
+train.train<-subset(train.train,select = -Cabin)
+train.test<-subset(train.test,select = -Cabin)
+```
+
+#用另外個函式的樹
+```{r}
+#install.packages("rpart")\
+#install.packages("rpart.plot")
+library(rpart)
+library(rpart.plot)
+set.seed(3)
+rpart.titanic <- rpart(
+  formula = Survived ~ .,
+  data    = train.train,
+  method  = "class"
+  )
+rpart.plot(rpart.titanic)
+```
+
+```{r}
+plotcp(rpart.titanic)
+rpart.titanic
+
+```
+
+
+## 隨機森林
+```{r}
+#install.packages("randomForest")
+library(randomForest)
+set.seed(1)
+rf.titanic=randomForest(Survived~.,data=train.train,importance=TRUE) 
+yhat.rf.train=predict(rf.titanic,newdata=train.train)
+table(yhat.rf.train,train.train$Survived)#不能打data，要打newdata
+#test accu =
+
+yhat.rf.test=predict(rf.titanic,newdata=train.test)
+table(yhat.rf.test,train.test$Survived)
+
+importance(rf.titanic)
+varImpPlot(rf.titanic)
+```
+## 用oob error挑tree的數目
+```{r}
+rf.titanic #OOB error rate: 27.61% 500棵樹，mtry=3
+plot(rf.titanic) #看起來在500左右oob error最小
+which.min(rf.titanic$err.rate)#530棵
+#OOB estimate of  error rate: 15.41%(84.59%)
+1-rf.titanic$err.rate[which.min(rf.titanic$err.rate)]#0.8421053 
+#理論上在test的效果會比500棵樹好
+```
+
+#kaggle預測
+
+
+```{r}
+
+sum(is.na(test$Age))# 177
+sum(is.na(test$Pclass))
+sum(is.na(test$Sex))
+sum(is.na(test$SibSp))
+sum(is.na(test$Parch))
+sum(is.na(test$Ticket))
+sum(is.na(test$Fare))#第153
+sum(is.na(test$Cabin))
+sum(is.na(test$Embarked))#空白
+```
+
+```{r}
+#str(test)
+#summary(test$Embarked)
+which(test$Embarked=="")
+test$Embarked[which(test$Embarked==""),]<-as.factor("S")
+
+```
+
+```{r}
+#為甚麼train.train有""但train沒有?
+
+train.train$Embarked<-as.factor(train.train$Embarked)
+train.test$Embarked<-as.factor(train.test$Embarked)
+train$Embarked<-as.factor(train$Embarked)
+test$Embarked<-as.factor(test$Embarked)
+str(train.train$Embarked)#1空白
+str(train$Embarked)#
+#sum(is.na(train$Embarked))#0
+#補為s好了，因為最多
+#which(train$Embarked=="")#62 830
+#train$Embarked[which(train$Embarked==""),]="S
+#train$Embarked[62,]=c("S")
+#train$Embarked[830,]=c("S")#不知道為甚麼出錯，手動直接改
+
+
+#summary(test$Embarked)#0空白
+#sum(is.na(test$Embarked))#0
+```
+## 隨機森林570
+```{r}
+#理論上隨機森林570棵在test的效果會比預設的500棵樹好
+library(randomForest)
+set.seed(1)
+rf.titanic=randomForest(Survived~.,data=train.train,mtry=3,ntree=570,importance=TRUE) #8
+#test.test<-cbind(test_id,test)
+str(test)
+str(train.train)
+
+#sum(is.na(test$Embarked)
+#levels(test$Embarked)<-levels(train$Embarked)
+yhat.test.rf=predict(rf.titanic,newdata=test)
+#which(is.na(yhat.test.rf))
+importance(rf.titanic)
+varImpPlot(rf.titanic)
+#test[153,]
+rf_result_570=cbind(test_id,yhat.test.rf)
+names(rf_result_570) <- c("PassengerId","Survived")
+
+write.csv(rf_result_570,file="C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/鐵達尼號預測結果/rf_result_570.csv")#accu=0.75598
+```
+
+## 隨機森林530
+```{r}
+#理論上隨機森林570棵在test的效果會比預設的500棵樹好
+library(randomForest)
+set.seed(1)
+rf.titanic=randomForest(Survived~.,data=train.train,mtry=3,ntree=530,importance=TRUE) #8
+
+
+#sum(is.na(test$Embarked)
+#levels(test$Embarked)<-levels(train$Embarked)
+yhat.test.rf=predict(rf.titanic,newdata=test)
+#which(is.na(yhat.test.rf))
+importance(rf.titanic)
+varImpPlot(rf.titanic)
+#test[153,]
+rf_result_530=cbind(test_id,yhat.test.rf)
+names(rf_result_530) <- c("PassengerId","Survived")
+
+write.csv(rf_result_530,file="C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/鐵達尼號預測結果/rf_result_530.csv")#accu=0.75837
+```
+
+## 隨機森林500
+```{r}
+#install.packages("randomForest")
+library(randomForest)
+set.seed(1)
+rf.titanic=randomForest(Survived~.,data=train.train,mtry=3,importance=TRUE) 
+importance(rf.titanic)
+varImpPlot(rf.titanic)
+yhat.test.rf_500=predict(rf.titanic,newdata=test)
+rf_result_500=cbind(test_id,yhat.test.rf_500)
+names(rf_result_500) <- c("PassengerId","Survived")
+
+write.csv(rf_result_500,file="C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/鐵達尼號預測結果/rf_result_500.csv")#accu=0.75837 還略高於570
+```
+## 決策樹
+```{r}
+set.seed(1)
+tree.titanic.result<-tree(Survived~.,train.train)
+tree.pred.result<-predict(tree.titanic.result,test,type="class")
+
+
+
+dt_result=cbind(test_id,as.data.frame(tree.pred.result))
+names(dt_result) <- c("PassengerId","Survived")
+
+write.csv(dt_result,file="C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/鐵達尼號預測結果/dt_result.csv")#accu=0.77751>隨機森林570>隨機森林500
+```
+
+## 隨機森林train.test
+```{r}
+library(randomForest)
+set.seed(1)
+rf.titanic=randomForest(Survived~.,data=train.train,mtry=3,ntree=530,importance=TRUE) #8
+
+OutcomeType
+#sum(is.na(test$Embarked)
+#levels(test$Embarked)<-levels(train$Embarked)
+yhat.test.rf=predict(rf.titanic,newdata=test)
+#which(is.na(yhat.test.rf))
+importance(rf.titanic)
+varImpPlot(rf.titanic)
+#test[153,]
+rf_result_530=cbind(test_id,yhat.test.rf)
+names(rf_result_530) <- c("PassengerId","Survived")
+
+write.csv(rf_result_530,file="C:/Users/User/Desktop/大四下/資料探勘/hw1/hw1/鐵達尼號預測結果/rf_result_530.csv")#accu=0.75837
+```
